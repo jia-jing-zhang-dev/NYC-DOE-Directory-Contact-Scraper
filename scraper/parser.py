@@ -265,32 +265,60 @@ class SchoolPageParser:
 
     def _extract_role_contact(self, text: str, keywords: List[str]) -> tuple[str, str, str]:
         """
-        双轨制提取：保留完美的单人提取模式（给Principal），并新增独立的多人列表提取模式（给Parent Coordinator）。
+        最终版：性能优化 + 10人上限控制 + 多人名单稳定提取。
         """
         all_names = []
         all_emails = []
         best_phone = ""
         
         lowered = text.lower()
-        # 1. 提取邮箱和电话 (保持原样，这个一直很稳定)
+        
+        # 1. 邮箱提取：保持精准
         for keyword in keywords:
             start_search = 0
             while True:
                 idx = lowered.find(keyword, start_search)
-                if idx == -1:
-                    break
-                
+                if idx == -1: break
                 window = text[idx : idx + 250]
                 emails_in_window = find_all_emails(window)
                 for e in emails_in_window:
-                    if e not in all_emails:
-                        all_emails.append(e)
-                
+                    if e not in all_emails: all_emails.append(e)
                 phone = normalize_phone(window) or ""
-                if phone and not best_phone:
-                    best_phone = phone
-                
+                if phone and not best_phone: best_phone = phone
                 start_search = idx + len(keyword)
+
+        # 2. 名字提取：增加 10 人上限控制
+        def get_ci_kw(kw):
+            return "".join([f"[{c.upper()}{c.lower()}]" if c.isalpha() else c for c in kw])
+
+        for keyword in keywords:
+            kw_pat = r"\b" + get_ci_kw(keyword) + r"s?\b"
+            single_name = r"[A-Z][a-zA-Z\.\-']+(?:\s+[A-Z][a-zA-Z\.\-']+){1,2}"
+            sep = r"(?:[\s,;|&]+(?:and\s+)?)"
+            # 修改：这里放宽到 10 个人的匹配空间
+            multi_name = f"({single_name}(?:{sep}{single_name}){{0,9}})"
+            
+            pat_a = r"\b" + multi_name + r"[\s,;|:\-]+" + kw_pat
+            pat_b = r"\b" + kw_pat + r"[\s,;|:\-]+" + multi_name
+
+            for pat in [pat_a, pat_b]:
+                start_search = 0
+                while True:
+                    match = re.search(pat, text[start_search:])
+                    if not match: break
+                    
+                    raw_names = match.group(1)
+                    valid_names_str = self._extract_name_near(raw_names + " ", keyword)
+                    if valid_names_str:
+                        for n in valid_names_str.split("; "):
+                            if n and n not in all_names:
+                                all_names.append(n)
+                    start_search += match.end()
+
+        # 3. 强制限制上限：最多 10 人
+        final_names = all_names[:10]
+        
+        return "; ".join(final_names), "; ".join(all_emails), best_phone
 
         # 辅助函数：手动将职位名称转换成大小写兼容模式，从而绝不使用 re.IGNORECASE！
         # 例如将 "principal" 变成 "[Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll]"
