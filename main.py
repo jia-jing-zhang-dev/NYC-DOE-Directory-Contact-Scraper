@@ -71,102 +71,201 @@ def load_seed_urls(args: argparse.Namespace) -> List[str]:
 
 
 async def run(config: ScraperConfig) -> List[SchoolRecord]:
-    # 1. 初始化
     logger = setup_logging(config.log_dir, config.log_level)
     exporter = DataExporter(config.output_dir, config.output_basename, logger)
     parser = SchoolPageParser(config, logger)
     records: List[SchoolRecord] = []
 
-    # 定义需要被忽略的头衔关键词（转小写），避免将头衔当成名字输出，避免姓名与邮箱错位
     IGNORE_TITLES = {
-        'principal', 'co-principal', 'assistant principal', 'parent coordinator', 
-        'school worker', 'acting principal', 'interim principal', 'teacher', 
-        'staff', 'director', 'coordinator', 'superintendent', 'president',
-        'vice principal', 'ap', 'ia'
-    }
+        'principal', 'co-principal', 'assistant principal', 'parent coordinator',
 
-    # 2. 爬取所有种子
+        'school worker', 'acting principal', 'interim principal', 'teacher',
+
+        'staff', 'director', 'coordinator', 'superintendent', 'president',
+
+         'vice principal', 'ap', 'ia'    }
+
     crawl_results = await crawl_all_seeds(config, logger)
 
-    # 3. 循环处理数据：每查完一个学校，立即处理并存入 CSV
+    def process_contacts(record, name_raw, email_raw, role_title):
+        rows = []
+
+        if not name_raw and not email_raw:
+            return rows
+
+        if name_raw:
+            name_raw = name_raw.replace("&nbsp;", " ")
+
+        raw_names = re.split(r"[;|\n,/]+", name_raw) if name_raw else []
+        raw_emails = re.split(r"[;|\n\s,]+", email_raw) if email_raw else []
+
+        valid_names = []
+        for n in raw_names:
+            n_clean = re.sub(r"\s+", " ", n).strip()
+
+            if not n_clean or len(n_clean) < 2:
+                continue
+
+            if n_clean.lower() in IGNORE_TITLES:
+                continue
+
+            valid_names.append(n_clean)
+
+        valid_emails = []
+        seen = set()
+
+        for e in raw_emails:
+            e_clean = e.strip()
+
+            if (
+                e_clean
+                and "@" in e_clean
+                and e_clean not in seen
+            ):
+                seen.add(e_clean)
+                valid_emails.append(e_clean)
+
+        if valid_names:
+            max_count = min(10, len(valid_names))
+        elif valid_emails:
+            max_count = 1
+        else:
+            max_count = 0
+
+        for i in range(max_count):
+
+            current_name = valid_names[i] if i < len(valid_names) else ""
+            current_email = valid_emails[i] if i < len(valid_emails) else ""
+
+            if not current_name and not current_email:
+                continue
+
+            first, middle, last = split_name(current_name)
+
+            if is_fake_name(first, middle, last):
+                continue
+
+            row = _record_to_row(
+                record,
+                role_title,
+                first,
+                last,
+                current_email,
+            )
+
+            rows.append(row)
+
+        return rows
+
     for result in tqdm(crawl_results, desc="Processing sites", unit="site"):
         try:
+
             record = parser.parse(result)
             records.append(record)
-            
-            # --- 统一定义一个处理多人的内部函数 ---
-# --- 统一定义一个处理多人的内部函数 ---
-            def process_contacts(name_raw, email_raw, role_title):
-                if not name_raw and not email_raw:
-                    return
-                
-                # 如果有 HTML 的无间断空格，先替换掉
-                if name_raw:
-                    name_raw = name_raw.replace('&nbsp;', ' ')
-                
-                raw_names = re.split(r'[;|\n,/]+', name_raw) if name_raw else []
-                raw_emails = re.split(r'[;|\n\s,]+', email_raw) if email_raw else []
-                
-                valid_names = []
-                for n in raw_names:
-                    # 强力清理所有多余空格和不可见字符
-                    n_clean = re.sub(r'\s+', ' ', n).strip()
-                    if not n_clean or len(n_clean) < 2:
-                        continue
-                        
-                    # 强制全小写后对比，彻底拦截 "school worker" 和 "principal"
-                    if n_clean.lower() in IGNORE_TITLES:
-                        continue
-                        
-                    # 直接加入有效名单，跳过可能有 Bug 的 clean_name
-                    valid_names.append(n_clean)
-                
-                valid_emails = []
-                for e in raw_emails:
-                    e_clean = e.strip()
-                    if e_clean and '@' in e_clean and e_clean not in valid_emails:
-                        valid_emails.append(e_clean)
-                
-            # 5. 完美对齐合并：以名字的数量为主导！
-                if valid_names:
-                    # 如果有名字，严格按照名字的数量建行。多抓到的无关邮箱统统丢弃！
-                    max_count = min(10, len(valid_names))
-                elif valid_emails:
-                    # 如果网页上真的没写名字，只有邮箱，那最多只建 1 行
-                    max_count = 1
+
+            rows = []
+
+            rows.extend(
+                process_contacts(
+                    record,
+                    record.principal_name,
+                    record.principal_email,
+                    "Principal",
+                )
+            )
+
+            rows.extend(
+                process_contacts(
+                    record,
+                    record.parent_coordinator_name,
+                    record.parent_coordinator_email,
+                    "Parent Coordinator",
+                )
+            )
+
+            # ========= 合并重复联系人 =========
+            merged = {}
+
+            for row in rows:
+
+                first = row["First Name"].strip().lower()
+                last = row["Last Name"].strip().lower()
+                email = row["Email"].strip().lower()
+
+                # 如果没有名字，用 email 区分
+                if first or last:
+                    key = (first, last)
+                elif email:
+                    key = ("email", email)
                 else:
-                    max_count = 0                
-                for i in range(max_count):
-                    current_name = valid_names[i] if i < len(valid_names) else ""
-                    current_email = valid_emails[i] if i < len(valid_emails) else ""
-                    
-                    if not current_name and not current_email:
-                        continue
-                        
-                    first, last = split_name(current_name)
-                    
-                    row = _record_to_row(record, role_title, first, last, current_email)
-                    exporter.append_to_csv(row)
-            # --- 调用该函数处理校长和家委会成员 ---
-            process_contacts(record.principal_name, record.principal_email, "Principal")
-            process_contacts(record.parent_coordinator_name, record.parent_coordinator_email, "Parent Coordinator")
-                
+                    # 没名字没邮箱，不合并
+                    key = id(row)
+
+                if key not in merged:
+                    merged[key] = row
+
+                else:
+                    old_role = merged[key]["Role"]
+                    new_role = row["Role"]
+
+                    if new_role not in old_role:
+                        merged[key]["Role"] = (
+                            old_role + " + " + new_role
+                        )
+
+                    if not merged[key]["Email"] and row["Email"]:
+                        merged[key]["Email"] = row["Email"]
+
+            for row in merged.values():
+                exporter.append_to_csv(row)
+
         except Exception as exc:
-            logger.error("Failed to process %s: %s", result.seed_url, exc)
+            logger.error(
+                "Failed to process %s: %s",
+                result.seed_url,
+                exc,
+            )
 
     return records
 
-def split_name(name: str) -> tuple[str, str]:
+def is_fake_name(first, middle, last):
+    # 先处理掉名字中的点号
+    f = first.replace(".", "")
+    l = last.replace(".", "")
+
+    # 判断 first 和 last 是否都只有 1 个字母
+    if len(f) == 1 and len(l) == 1:
+        return True
+
+    return False
+
+def split_name(name: str) -> tuple[str, str, str]:
     name = clean_name(name)
     parts = name.split()
 
-    if len(parts) >= 2:
-        return " ".join(parts[:-1]), parts[-1]
-    elif len(parts) == 1:
-        return parts[0], ""
-    else:
-        return "", ""
+    suffixes = {"jr", "sr", "ii", "iii", "iv"}
 
+    # 去掉末尾的 suffix
+    while parts and parts[-1].lower().rstrip(".,") in suffixes:
+        parts.pop()
+
+    if len(parts) >= 3:
+        first = parts[0]
+        middle = " ".join(parts[1:-1])
+        last = parts[-1]
+    elif len(parts) == 2:
+        first = parts[0]
+        middle = ""
+        last = parts[1]
+    elif len(parts) == 1:
+        first = parts[0]
+        middle = ""
+        last = ""
+    else:
+        first = middle = last = ""
+
+    return first, middle, last
+    
 def main(argv: List[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
     seed_urls = load_seed_urls(args)
