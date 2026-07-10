@@ -137,3 +137,15 @@ class DataCleaner:
         primary.pages_crawled = sorted(set(primary.pages_crawled) | set(secondary.pages_crawled))
         primary.crawl_errors = sorted(set(primary.crawl_errors) | set(secondary.crawl_errors))
         return primary
+
+
+def split_name(name: str) -> tuple[str, str]:
+    name = clean_name(name)
+    parts = name.split()
+
+    if len(parts) >= 2:
+        return " ".join(parts[:-1]), parts[-1]
+    elif len(parts) == 1:
+        return parts[0], ""
+    else:
+        return "", ""

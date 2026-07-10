@@ -143,15 +143,7 @@ async def run(config: ScraperConfig) -> List[SchoolRecord]:
                     if not current_name and not current_email:
                         continue
                         
-                    parts = current_name.split()
-                    first = parts[0] if parts else ""
-                    if len(parts) > 1:
-                        if parts[-1] == "Jr":
-                            last = parts[-2]
-                        else:
-                            last = parts[-1]
-                    else:
-                        last = ""                        
+                    first, last = split_name(current_name)
                     
                     row = _record_to_row(record, role_title, first, last, current_email)
                     exporter.append_to_csv(row)
@@ -163,6 +155,17 @@ async def run(config: ScraperConfig) -> List[SchoolRecord]:
             logger.error("Failed to process %s: %s", result.seed_url, exc)
 
     return records
+
+def split_name(name: str) -> tuple[str, str]:
+    name = clean_name(name)
+    parts = name.split()
+
+    if len(parts) >= 2:
+        return " ".join(parts[:-1]), parts[-1]
+    elif len(parts) == 1:
+        return parts[0], ""
+    else:
+        return "", ""
 
 def main(argv: List[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
