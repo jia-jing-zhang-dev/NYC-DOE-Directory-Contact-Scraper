@@ -145,7 +145,13 @@ async def run(config: ScraperConfig) -> List[SchoolRecord]:
                         
                     parts = current_name.split()
                     first = parts[0] if parts else ""
-                    last = parts[-1] if len(parts) > 1 else ""
+                    if len(parts) > 1:
+                        if parts[-1] == "Jr":
+                            last = parts[-2]
+                        else:
+                            last = parts[-1]
+                    else:
+                        last = ""                        
                     
                     row = _record_to_row(record, role_title, first, last, current_email)
                     exporter.append_to_csv(row)
