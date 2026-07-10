@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+logs/*.log
+output/*.xlsx
+output/*.csv
+output/*.json
+data/*
+!data/.gitkeep
+!logs/.gitkeep
+!output/.gitkeep
+.DS_Store
+*.egg-info/
+.pytest_cache/
