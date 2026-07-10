@@ -265,14 +265,14 @@ class SchoolPageParser:
 
     def _extract_role_contact(self, text: str, keywords: List[str]) -> tuple[str, str, str]:
         """
-        精准提取：加入手动大小写强制校验，彻底杜绝小写杂音词混入。
+        双轨制提取：保留完美的单人提取模式（给Principal），并新增独立的多人列表提取模式（给Parent Coordinator）。
         """
         all_names = []
         all_emails = []
         best_phone = ""
         
         lowered = text.lower()
-        # 1. 提取邮箱和电话
+        # 1. 提取邮箱和电话 (保持原样，这个一直很稳定)
         for keyword in keywords:
             start_search = 0
             while True:
@@ -280,9 +280,7 @@ class SchoolPageParser:
                 if idx == -1:
                     break
                 
-# 💥 关键修复：找邮箱只往后找！防止把排在上面的上一个人的邮箱吸进来
-                window = text[idx : idx + 250]        
-
+                window = text[idx : idx + 250]
                 emails_in_window = find_all_emails(window)
                 for e in emails_in_window:
                     if e not in all_emails:
@@ -294,30 +292,43 @@ class SchoolPageParser:
                 
                 start_search = idx + len(keyword)
 
-        # 2. 精准提取名字 
+        # 辅助函数：手动将职位名称转换成大小写兼容模式，从而绝不使用 re.IGNORECASE！
+        # 例如将 "principal" 变成 "[Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll]"
+        def get_ci_kw(kw):
+            return "".join([f"[{c.upper()}{c.lower()}]" if c.isalpha() else c for c in kw])
+
+        # 2. 精准提取名字：执行双轨制
         for keyword in keywords:
-# 加上 \- 允许名字和头衔之间存在横杠
-            pat_a = r"\b([A-Z][a-zA-Z\.\-']+(?:\s+[A-Z][a-zA-Z\.\-']+){1,2})[\s,;|:\-]+" + re.escape(keyword) + r"\b"
-            pat_b = r"\b" + re.escape(keyword) + r"[\s,;|:\-]+([A-Z][a-zA-Z\.\-']+(?:\s+[A-Z][a-zA-Z\.\-']+){1,2})\b"
+            kw_pat = r"\b" + get_ci_kw(keyword) + r"s?\b"  # 支持复数 s
+            
+    # 标准人名定义：首字母大写的 2 到 3 个单词 (为了安全起见，这里去掉了外层的捕获括号)
+            single_name = r"[A-Z][a-zA-Z\.\-']+(?:\s+[A-Z][a-zA-Z\.\-']+){1,2}"
+            
+            # 【轨道 A】：经典单人模式（之前抓 Principal 100% 成功的模式！）
+            pat_single_1 = r"\b(" + single_name + r")[\s,;|:\-]+" + kw_pat
+            pat_single_2 = kw_pat + r"[\s,;|:\-]+(" + single_name + r")"
+            
+            # 【轨道 B】：专门给 Parent Coordinator 的多人模式 (💥 解除封印版)
+            # 允许用 and, &, 逗号 连接的多个人名（放宽到最多 15 个人！）
+            sep = r"(?:[\s,;|&]+(?:and\s+)?)"
+            multi_name = f"({single_name}(?:{sep}{single_name}){{0,15}})"
+            
+            pat_multi_1 = r"\b" + multi_name + r"[\s,;|:\-]+" + kw_pat
+            pat_multi_2 = kw_pat + r"[\s,;|:\-]+" + multi_name
 
-            for pat in [pat_a, pat_b]:
-                for match in re.finditer(pat, text, re.IGNORECASE):
-                    candidate = clean_text(match.group(1))
+            # 将两条轨道的所有可能情况都扫一遍
+            for pat in [pat_multi_1, pat_multi_2, pat_single_1, pat_single_2]:
+                for match in re.finditer(pat, text):
+                    raw_names = match.group(1)
                     
-                    # 💥 致命修复：强行干预！即使正则匹配到了，也要手动检查每个词是否首字母大写！
-                    words = candidate.split()
-                    if not all(w[0].isupper() for w in words if w):
-                        continue  # 只要有任何一个小写开头的词 (如 "and", "your")，立刻无情踢掉！
+                    # 送去清洗器做最后的黑名单校验
+                    valid_names_str = self._extract_name_near(raw_names + " ", keyword)
+                    if valid_names_str:
+                        for n in valid_names_str.split("; "):
+                            if n and n not in all_names:
+                                all_names.append(n)
 
-                    lowered_candidate = candidate.lower()
-                    if lowered_candidate not in ("new york", "public school", "school leader"):
-                        # 扩充黑名单，拦截截图中的漏网之鱼
-                        blacklist = ["school", "team", "election", "panel", "parent", "meeting", "bylaws", "schedule", "conference", "annual", "survey", "wellness", "contacts", "information", "report", "leader", "board"]
-                        if not any(bad_word in lowered_candidate for bad_word in blacklist):
-                            if candidate not in all_names:
-                                all_names.append(candidate)
-
-        # 3. 兜底方案
+        # 3. 极小窗口兜底（针对格式极其错乱的网页）
         if not all_names and keywords:
             for keyword in keywords:
                 idx = lowered.find(keyword)
@@ -327,7 +338,6 @@ class SchoolPageParser:
                     if fallback_names:
                         all_names.extend(fallback_names.split("; "))
 
-        # 去重
         unique_names = []
         for name in all_names:
             if name and name not in unique_names:
@@ -337,6 +347,45 @@ class SchoolPageParser:
 
 
     def _extract_name_near(self, window: str, keyword: str) -> str:
-        without_keyword = re.sub(re.escape(keyword), " ", window, flags=re.IGNORECASE)
+        # 手动替换掉关键词，防止干扰
+        def get_ci_kw(kw):
+            return "".join([f"[{c.upper()}{c.lower()}]" if c.isalpha() else c for c in kw])
+        kw_pat_ci = r"\b" + get_ci_kw(keyword) + r"s?\b"
+        without_keyword = re.sub(kw_pat_ci, " ", window)
         
         # 严格要求大写的正则
+        name_pattern = re.compile(r"\b([A-Z][a-zA-Z\.\-']+(?:\s+[A-Z][a-zA-Z\.\-']+){1,2})\b")
+        
+        # 最强黑名单，已拉黑之前截图中的所有菜单栏单词
+        blacklist = {
+            "school", "team", "election", "panel", "resolution", "parent", 
+            "fundraiser", "frequently", "role", "all", "sexual", "coordinat", 
+            "space", "district", "number", "family", "worker", "counselor", 
+            "education", "helpful", "campa", "harassment", "public", "new", 
+            "york", "department", "board", "committee", "community", "council", 
+            "safety", "health", "wellness", "policy", "student", "teacher", 
+            "staff", "faculty", "leader", "leadership", "overview", "quality", 
+            "reports", "accessibility", "geographic", "borough", "contact", 
+            "information", "report", "bullying", "share", "building",
+            "meeting", "bylaws", "declaration", "schedule", "special", "plans",
+            "campaign", "appointee", "seats", "application", "resources", "responsib",
+            "training", "conference", "emergency", "annual", "survey",
+            "teachhub", "service", "charter", "plant", "powered", "food", "menus",
+            "facilities", "testing", "avenue", "water", "elections", "councils", "services", "brea"
+        }
+        
+        found_names = []
+        for match in name_pattern.finditer(without_keyword):
+            candidate = clean_text(match.group(1))
+            
+            # 双保险：强制校验每一个词是否真正是大写开头
+            words = candidate.split()
+            if not all(w[0].isupper() for w in words if w):
+                continue
+                
+            lowered_candidate = candidate.lower()
+            if not any(bad_word in lowered_candidate.split() for bad_word in blacklist):
+                if candidate not in found_names:
+                    found_names.append(candidate)
+                    
+        return "; ".join(found_names)
