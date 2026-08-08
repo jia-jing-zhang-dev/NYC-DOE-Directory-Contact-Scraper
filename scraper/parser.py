@@ -75,7 +75,6 @@ class SchoolRecord:
     grades: str = ""
     borough: str = ""
     district: str = ""
-    county: str = ""
     state: str = ""
     address: str = ""
     zip_code: str = ""
@@ -112,7 +111,6 @@ class SchoolPageParser:
         record.website = crawl_result.seed_url
         record.source_url = crawl_result.seed_url
         record.borough = self.config.default_borough
-        record.county = self.config.default_county
         record.state = self.config.default_state
         record.last_crawled = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         record.pages_crawled = list(crawl_result.pages.keys())
@@ -155,7 +153,7 @@ class SchoolPageParser:
 
             record.district = "Unknown"
 
-        record.address, record.zip_code = self._extract_address(full_text)
+        record.address, record.zip_code, record.borough = self._extract_address(full_text)
         record.social_media_links = self._extract_social_links(soups)
 
         all_emails = find_all_emails(full_text)
@@ -228,19 +226,42 @@ class SchoolPageParser:
         match = _DBN_RE.search(text)
         return match.group(1).upper() if match else ""
 
-    def _extract_address(self, text: str) -> tuple[str, str]:
+    def _extract_address(self, text: str) -> tuple[str, str, str]:
         match = _ADDRESS_RE.search(text)
         if not match:
-            return "", ""
+            return "", "", ""
+
         raw_address = match.group(0)
+
         zip_match = _ZIP_RE.search(raw_address)
         zip_code = zip_match.group(0) if zip_match else ""
-        # Strip the trailing ZIP from the street/city portion; it is returned
-        # separately and re-combined by the exporter to avoid duplication.
+
         street_and_city = raw_address
         if zip_match:
-            street_and_city = raw_address[: zip_match.start()].rstrip(", ")
-        return standardize_address(street_and_city), zip_code
+            street_and_city = raw_address[:zip_match.start()].rstrip(", ")
+
+        # 从地址中提取 borough
+        borough = self._extract_borough_from_address(raw_address)
+
+        return standardize_address(street_and_city), zip_code, borough
+
+    def _extract_borough_from_address(self, address: str) -> str:
+        borough_map = {
+            "manhattan": "Manhattan",
+            "new york": "Manhattan",
+            "bronx": "Bronx",
+            "brooklyn": "Brooklyn",
+            "queens": "Queens",
+            "staten island": "Staten Island",
+        }
+
+        lowered = address.lower()
+
+        for key, borough in borough_map.items():
+            if re.search(rf"\b{re.escape(key)}\b", lowered):
+                return borough
+
+        return ""
 
     def _extract_social_links(self, soups: Dict[str, BeautifulSoup]) -> List[str]:
         found: List[str] = []

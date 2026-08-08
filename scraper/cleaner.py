@@ -15,6 +15,7 @@ Post-processing pass over parsed SchoolRecords:
 from __future__ import annotations
 
 import logging
+import re 
 from typing import Dict, List, Optional
 
 from scraper.parser import SchoolRecord
@@ -48,7 +49,6 @@ class DataCleaner:
         record.grades = clean_text(record.grades)
         record.borough = clean_text(record.borough)
         record.district = clean_text(record.district)
-        record.county = clean_text(record.county)
         record.state = clean_text(record.state)
         record.address = standardize_address(record.address)
         record.zip_code = clean_text(record.zip_code)
@@ -88,40 +88,95 @@ class DataCleaner:
     def _clean_email(raw: str) -> str:
         if not raw:
             return ""
-        # 支持用逗号分隔的多个邮箱：拆分 -> 逐个验证 -> 重新拼装
+
         valid_emails = []
-        for part in str(raw).split(","):
+
+        for part in re.split(r"[,;]", str(raw)):
             candidate = clean_text(part).lower()
+
+            if not candidate:
+                continue
+
+            print("BEFORE:", candidate)
+
+            candidate = DataCleaner.normalize_email(candidate)
+
+            print("AFTER:", candidate)
+
             if is_valid_email(candidate):
                 valid_emails.append(candidate)
-        
+
         return ", ".join(valid_emails)
+
+    @staticmethod
+    def normalize_email(email: str) -> str:
+        if not email:
+            return ""
+
+        email = email.strip().lower()
+
+        username, sep, domain = email.rpartition("@")
+
+        if not sep:
+            return email
+
+        if domain in {
+            "schools.ny",
+            "schools.nyc",
+            "schools.nyc.g",
+            "schools.nyc.go",
+            "schools.nyc.gov",
+        }:
+            return f"{username}@schools.nyc.gov"
+
+        return email
     # ------------------------------------------------------------------
     def _deduplicate(self, records: List[SchoolRecord]) -> List[SchoolRecord]:
         """
-        Merge records that clearly refer to the same school: identical
-        website domain, OR identical normalized (name, zip) pair.
-        The record with more populated fields "wins" and absorbs any
-        missing fields from its duplicate.
+        Merge records that clearly refer to the same school.
+
+        Priority:
+        1. NYC DOE school URL/code, e.g. /schools/K200
+        2. normalized school name + ZIP
+        3. website domain ONLY when it is not a shared domain
         """
+
         by_key: Dict[str, SchoolRecord] = {}
         order: List[str] = []
 
         for record in records:
-            domain_key = extract_domain(record.website)
-            name_key = f"{record.school_name.strip().lower()}|{record.zip_code.strip()}"
-            key = domain_key or name_key
+            school_key = ""
+
+            # NYC DOE school code from URL
+            if record.source_url:
+                match = re.search(r"/schools/([A-Z]\d+)", record.source_url, re.I)
+                if match:
+                    school_key = f"nyc-doe:{match.group(1).upper()}"
+
+            # Prefer school-specific key
+            if school_key:
+                key = school_key
+            else:
+                name_key = (
+                    f"{record.school_name.strip().lower()}"
+                    f"|{record.zip_code.strip()}"
+                )
+
+                key = name_key
 
             if key in by_key:
                 merged = self._merge(by_key[key], record)
                 by_key[key] = merged
-                self.logger.info("Merged duplicate school record for key=%s", key)
+                self.logger.info(
+                    "Merged duplicate school record for key=%s",
+                    key,
+                )
             else:
                 by_key[key] = record
                 order.append(key)
 
         return [by_key[k] for k in order]
-
+    
     @staticmethod
     def _merge(primary: SchoolRecord, secondary: SchoolRecord) -> SchoolRecord:
         """Fill any blank field on `primary` using `secondary`'s value."""

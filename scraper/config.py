@@ -86,7 +86,7 @@ class ScraperConfig:
     rate_limit_delay_seconds: float = 1.0  # <--- 如果这一行报错，请检查是否拼写完全一致！
     max_retries: int = 1
     backoff_factor: float = 0.5
-    user_agent: str = "QueensSchoolDirectoryBot/1.0"  # <--- 就是缺了这一行！
+    user_agent: str = "NYC_SchoolDirectoryBot/1.0"  # <--- 就是缺了这一行！
     # ... 其余代码 ...
     # --- Behavior --------------------------------------------------------------
     respect_robots_txt: bool = True
@@ -99,8 +99,7 @@ class ScraperConfig:
     social_domains: List[str] = field(default_factory=lambda: list(SOCIAL_DOMAINS))
 
     # --- Static jurisdiction defaults for this dataset (Queens, NYC preK-8) ----
-    default_borough: str = "Queens"
-    default_county: str = "Queens"
+    default_borough: str = ""
     default_state: str = "New York"
 
     # --- Output ------------------------------------------------------------------
@@ -108,7 +107,7 @@ class ScraperConfig:
     data_dir: Path = DATA_DIR
     log_dir: Path = LOG_DIR
     log_level: str = "INFO"
-    output_basename: str = "queens_prek8_schools"
+    output_basename: str = "NYC_prek8_schools"
 
     def __post_init__(self) -> None:
         if not self.allowed_domains:
@@ -124,7 +123,6 @@ OUTPUT_COLUMNS: List[str] = [
     "School Name",
     "District",
     "Borough",
-    "County",
     "State",
     "Grades",
     "Principal",

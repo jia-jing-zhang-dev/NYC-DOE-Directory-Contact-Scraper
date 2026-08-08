@@ -1,7 +1,7 @@
 dbns = []
 
-for i in range(1, 1000):
-    school = f"Q{i:03d}"
+for i in range(200, 205):
+    school = f"K{i:03d}"
     dbns.append(school)
 
 
