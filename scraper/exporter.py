@@ -146,7 +146,7 @@ class DataExporter:
         if any(keyword.lower() in school_name.lower()
             for keyword in invalid_keywords):
             self.logger.warning(
-                f"检测到无效记录，已跳过: {school_name}"
+                f"Invalid record detected, skipped.: {school_name}"
             )
             return
 
@@ -172,5 +172,5 @@ class DataExporter:
             writer.writerow(row_data)
 
         self.logger.info(
-            f"成功追加记录到 CSV: {school_name}"
+            f"Successfully appended record to CSV: {school_name}"
         )

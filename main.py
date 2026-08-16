@@ -30,9 +30,9 @@ import re
 from scraper.cleaner import DataCleaner
 from scraper.config import LOG_DIR, OUTPUT_DIR, ScraperConfig
 from scraper.crawler import crawl_all_seeds
-from scraper.exporter import DataExporter, _record_to_row  # 确保这里导入了 _record_to_row
+from scraper.exporter import DataExporter, _record_to_row  
 from scraper.parser import SchoolPageParser, SchoolRecord
-from scraper.utils import setup_logging, clean_name        # 假设你把 clean_name 放在了 utils.py
+from scraper.utils import setup_logging, clean_name        
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(

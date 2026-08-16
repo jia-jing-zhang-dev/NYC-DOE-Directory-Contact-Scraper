@@ -52,7 +52,6 @@ DEFAULT_RELEVANT_KEYWORDS: List[str] = [
 DEFAULT_EXCLUDED_PATTERNS: List[str] = [
     "javascript:", "mailto:", "tel:", "#", ".pdf", ".jpg", ".png",
     "/wp-admin", "/wp-json", "logout", "login",
-    # 新增以下屏蔽规则：
     "/about-us/messages-for-families/", 
     "/about-us/news/", 
     "/about-us/reports/",
@@ -78,16 +77,15 @@ class ScraperConfig:
     # --- Crawl limits ---
     max_pages_per_site: int = 1
     max_crawl_depth: int = 0
-    max_concurrent_requests: int = 15  # 确保这里有值
-    max_concurrent_sites: int = 5      # 确保这里有值
+    max_concurrent_requests: int = 15  
+    max_concurrent_sites: int = 5     
 
     # --- Networking ---
     request_timeout_seconds: int = 10
-    rate_limit_delay_seconds: float = 1.0  # <--- 如果这一行报错，请检查是否拼写完全一致！
+    rate_limit_delay_seconds: float = 1.0  
     max_retries: int = 1
     backoff_factor: float = 0.5
-    user_agent: str = "NYC_SchoolDirectoryBot/1.0"  # <--- 就是缺了这一行！
-    # ... 其余代码 ...
+    user_agent: str = "NYC_SchoolDirectoryBot/1.0"  
     # --- Behavior --------------------------------------------------------------
     respect_robots_txt: bool = True
     use_playwright: bool = False
@@ -98,7 +96,7 @@ class ScraperConfig:
     excluded_patterns: List[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDED_PATTERNS))
     social_domains: List[str] = field(default_factory=lambda: list(SOCIAL_DOMAINS))
 
-    # --- Static jurisdiction defaults for this dataset (Queens, NYC preK-8) ----
+    # --- Static jurisdiction defaults for this dataset ( NYC preK-8) ----
     default_borough: str = ""
     default_state: str = "New York"
 
@@ -129,7 +127,7 @@ OUTPUT_COLUMNS: List[str] = [
     "Principal Email",
     "Parent Coordinator",
     "Parent Coordinator Email",
-    "School Phone Number",  # <--- 新增这一行！
+    "School Phone Number",  
     "School Address",
     "District Borough Number",
     "Source URL",

@@ -1,20 +1,3 @@
-"""
-parser.py
-=========
-Turns the raw HTML collected by the crawler into a structured SchoolRecord.
-
-Extraction strategy
---------------------
-1. Concatenate visible text from all crawled pages for a site.
-2. Use regex to pull every email and phone number found anywhere.
-3. For role-specific contacts (Principal, Assistant Principal, Parent
-   Coordinator), scan text in small windows around role keywords to find
-   the nearest associated name / email / phone ("proximity heuristic") --
-   this mirrors how a human would skim a staff-directory page.
-4. Pull school name from <title>/<h1>, address from a regex tuned to NYS
-   street-address + ZIP patterns, and social links from anchor hrefs.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -105,7 +88,6 @@ class SchoolPageParser:
         self.config = config
         self.logger = logger or logging.getLogger("school_scraper")
 
-    # ------------------------------------------------------------------
     def parse(self, crawl_result: CrawlResult) -> SchoolRecord:
         record = SchoolRecord()
         record.website = crawl_result.seed_url
@@ -124,15 +106,10 @@ class SchoolPageParser:
             url: BeautifulSoup(html, "html.parser") for url, html in crawl_result.pages.items()
         }
 
-        # --- 新增的代码：将隐藏在 mailto 里的邮箱提取为可见文本 ---
         for soup in soups.values():
-            # 找到所有包含 mailto: 的 a 标签
             for a_tag in soup.find_all("a", href=lambda href: href and href.lower().startswith("mailto:")):
-                # 提取出干净的邮箱地址 (截掉前 7 个字符 "mailto:")
                 hidden_email = a_tag["href"][7:].strip()
-                # 把邮箱作为可见文本，强行追加到这个链接文字的后面
                 a_tag.append(f" {hidden_email} ")
-        # --------------------------------------------------------
 
         full_text = "\n".join(clean_text(soup.get_text(" ")) for soup in soups.values())
         full_text = full_text.replace(",", ", ")
@@ -144,13 +121,9 @@ class SchoolPageParser:
         record.district_borough_number = self._extract_dbn(full_text)
 
         dbn = record.district_borough_number
-
         if dbn and len(dbn) >= 2:
-
-            record.district = dbn[:2] 
-
+            record.district = dbn[:2]
         else:
-
             record.district = "Unknown"
 
         record.address, record.zip_code, record.borough = self._extract_address(full_text)
@@ -175,7 +148,6 @@ class SchoolPageParser:
 
         return record
 
-    # ------------------------------------------------------------------
     def _extract_school_name(self, soups: Dict[str, BeautifulSoup], fallback_domain: str) -> str:
         for soup in soups.values():
             h1 = soup.find("h1")
@@ -186,7 +158,6 @@ class SchoolPageParser:
         for soup in soups.values():
             if soup.title and soup.title.string:
                 text = clean_text(soup.title.string)
-                # Titles often look like "Contact Us | PS 123 Q" - take the longest segment.
                 segments = [clean_text(s) for s in re.split(r"[|\-–]", text) if clean_text(s)]
                 if segments:
                     return max(segments, key=len)
@@ -205,13 +176,10 @@ class SchoolPageParser:
         return ""
 
     def _extract_grades(self, text: str) -> str:
-        # 1. 强制认准 "Grades:" 冒号！精准提取截图里逗号分隔的格式 (如 PK,0K,01,02,SE)
-        # 只允许提取 P, K, S, E, 数字, 逗号和横杠，这样碰到旁边的 Geographic 就会自动停下
         match = re.search(r"Grades?:\s*([PK0-9SE,\-]+(?:\s+[PK0-9SE,\-]+)*)", text)
         if match:
             return match.group(1).strip(',- ')
             
-        # 2. 备用方案：如果有的学校用的是横杠格式 (比如 PreK-5 或 9-12)，依然强制认准冒号
         fallback = re.search(r"Grades?:\s*([A-Za-z0-9]+\s*-\s*[A-Za-z0-9]+)", text)
         if fallback:
             return fallback.group(1).strip()
@@ -232,7 +200,6 @@ class SchoolPageParser:
             return "", "", ""
 
         raw_address = match.group(0)
-
         zip_match = _ZIP_RE.search(raw_address)
         zip_code = zip_match.group(0) if zip_match else ""
 
@@ -240,9 +207,7 @@ class SchoolPageParser:
         if zip_match:
             street_and_city = raw_address[:zip_match.start()].rstrip(", ")
 
-        # 从地址中提取 borough
         borough = self._extract_borough_from_address(raw_address)
-
         return standardize_address(street_and_city), zip_code, borough
 
     def _extract_borough_from_address(self, address: str) -> str:
@@ -254,13 +219,10 @@ class SchoolPageParser:
             "queens": "Queens",
             "staten island": "Staten Island",
         }
-
         lowered = address.lower()
-
         for key, borough in borough_map.items():
             if re.search(rf"\b{re.escape(key)}\b", lowered):
                 return borough
-
         return ""
 
     def _extract_social_links(self, soups: Dict[str, BeautifulSoup]) -> List[str]:
@@ -284,100 +246,56 @@ class SchoolPageParser:
                 return email
         return emails[0] if emails else ""
 
+    def _get_ci_kw(self, kw: str) -> str:
+        return "".join([f"[{c.upper()}{c.lower()}]" if c.isalpha() else c for c in kw])
+
     def _extract_role_contact(self, text: str, keywords: List[str]) -> tuple[str, str, str]:
-        """
-        最终版：性能优化 + 10人上限控制 + 多人名单稳定提取。
-        """
         all_names = []
         all_emails = []
         best_phone = ""
-        
         lowered = text.lower()
         
-        # 1. 邮箱提取：保持精准
+        # 1. Email & Phone extraction in window around keyword
         for keyword in keywords:
             start_search = 0
             while True:
                 idx = lowered.find(keyword, start_search)
-                if idx == -1: break
+                if idx == -1: 
+                    break
                 window = text[idx : idx + 250]
                 emails_in_window = find_all_emails(window)
                 for e in emails_in_window:
-                    if e not in all_emails: all_emails.append(e)
+                    if e not in all_emails: 
+                        all_emails.append(e)
                 phone = normalize_phone(window) or ""
-                if phone and not best_phone: best_phone = phone
+                if phone and not best_phone: 
+                    best_phone = phone
                 start_search = idx + len(keyword)
 
-        # 2. 名字提取：增加 10 人上限控制
-        def get_ci_kw(kw):
-            return "".join([f"[{c.upper()}{c.lower()}]" if c.isalpha() else c for c in kw])
-
+        # 2. Name extraction via multiple patterns
         for keyword in keywords:
-            kw_pat = r"\b" + get_ci_kw(keyword) + r"s?\b"
-            single_name = r"[A-Z][a-zA-Z\.\-']+(?:\s+[A-Z][a-zA-Z\.\-']+){1,2}"
-            sep = r"(?:[\s,;|&]+(?:and\s+)?)"
-            # 修改：这里放宽到 10 个人的匹配空间
-            multi_name = f"({single_name}(?:{sep}{single_name}){{0,9}})"
-            
-            pat_a = r"\b" + multi_name + r"[\s,;|:\-]+" + kw_pat
-            pat_b = r"\b" + kw_pat + r"[\s,;|:\-]+" + multi_name
-
-            for pat in [pat_a, pat_b]:
-                start_search = 0
-                while True:
-                    match = re.search(pat, text[start_search:])
-                    if not match: break
-                    
-                    raw_names = match.group(1)
-                    valid_names_str = self._extract_name_near(raw_names + " ", keyword)
-                    if valid_names_str:
-                        for n in valid_names_str.split("; "):
-                            if n and n not in all_names:
-                                all_names.append(n)
-                    start_search += match.end()
-
-        # 3. 强制限制上限：最多 10 人
-        final_names = all_names[:10]
-        
-        return "; ".join(final_names), "; ".join(all_emails), best_phone
-
-        # 辅助函数：手动将职位名称转换成大小写兼容模式，从而绝不使用 re.IGNORECASE！
-        # 例如将 "principal" 变成 "[Pp][Rr][Ii][Nn][Cc][Ii][Pp][Aa][Ll]"
-        def get_ci_kw(kw):
-            return "".join([f"[{c.upper()}{c.lower()}]" if c.isalpha() else c for c in kw])
-
-        # 2. 精准提取名字：执行双轨制
-        for keyword in keywords:
-            kw_pat = r"\b" + get_ci_kw(keyword) + r"s?\b"  # 支持复数 s
-            
-    # 标准人名定义：首字母大写的 2 到 3 个单词 (为了安全起见，这里去掉了外层的捕获括号)
+            kw_pat = r"\b" + self._get_ci_kw(keyword) + r"s?\b"  
             single_name = r"[A-Z][a-zA-Z\.\-']+(?:\s+[A-Z][a-zA-Z\.\-']+){1,2}"
             
-            # 【轨道 A】：经典单人模式（之前抓 Principal 100% 成功的模式！）
             pat_single_1 = r"\b(" + single_name + r")[\s,;|:\-]+" + kw_pat
             pat_single_2 = kw_pat + r"[\s,;|:\-]+(" + single_name + r")"
             
-            # 【轨道 B】：专门给 Parent Coordinator 的多人模式 (💥 解除封印版)
-            # 允许用 and, &, 逗号 连接的多个人名（放宽到最多 15 个人！）
             sep = r"(?:[\s,;|&]+(?:and\s+)?)"
             multi_name = f"({single_name}(?:{sep}{single_name}){{0,15}})"
             
             pat_multi_1 = r"\b" + multi_name + r"[\s,;|:\-]+" + kw_pat
             pat_multi_2 = kw_pat + r"[\s,;|:\-]+" + multi_name
 
-            # 将两条轨道的所有可能情况都扫一遍
             for pat in [pat_multi_1, pat_multi_2, pat_single_1, pat_single_2]:
                 for match in re.finditer(pat, text):
                     raw_names = match.group(1)
-                    
-                    # 送去清洗器做最后的黑名单校验
                     valid_names_str = self._extract_name_near(raw_names + " ", keyword)
                     if valid_names_str:
                         for n in valid_names_str.split("; "):
                             if n and n not in all_names:
                                 all_names.append(n)
 
-        # 3. 极小窗口兜底（针对格式极其错乱的网页）
+        # 3. Tiny window fallback for messy pages
         if not all_names and keywords:
             for keyword in keywords:
                 idx = lowered.find(keyword)
@@ -392,20 +310,14 @@ class SchoolPageParser:
             if name and name not in unique_names:
                 unique_names.append(name)
         
-        return "; ".join(unique_names), "; ".join(all_emails), best_phone
-
+        return "; ".join(unique_names[:10]), "; ".join(all_emails), best_phone
 
     def _extract_name_near(self, window: str, keyword: str) -> str:
-        # 手动替换掉关键词，防止干扰
-        def get_ci_kw(kw):
-            return "".join([f"[{c.upper()}{c.lower()}]" if c.isalpha() else c for c in kw])
-        kw_pat_ci = r"\b" + get_ci_kw(keyword) + r"s?\b"
+        kw_pat_ci = r"\b" + self._get_ci_kw(keyword) + r"s?\b"
         without_keyword = re.sub(kw_pat_ci, " ", window)
         
-        # 严格要求大写的正则
         name_pattern = re.compile(r"\b([A-Z][a-zA-Z\.\-']+(?:\s+[A-Z][a-zA-Z\.\-']+){1,2})\b")
         
-        # 最强黑名单，已拉黑之前截图中的所有菜单栏单词
         blacklist = {
             "school", "team", "election", "panel", "resolution", "parent", 
             "fundraiser", "frequently", "role", "all", "sexual", "coordinat", 
@@ -426,8 +338,6 @@ class SchoolPageParser:
         found_names = []
         for match in name_pattern.finditer(without_keyword):
             candidate = clean_text(match.group(1))
-            
-            # 双保险：强制校验每一个词是否真正是大写开头
             words = candidate.split()
             if not all(w[0].isupper() for w in words if w):
                 continue
